@@ -5,7 +5,7 @@ import requests
 import time
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
-from streamlit_webrtc import webrtc_streamer
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 import numpy as np
 import wave
@@ -77,7 +77,7 @@ Resume: {resume_text}"""
         audio_processor = AudioProcessor()
         ctx = webrtc_streamer(
             key="audio",
-            mode="SENDONLY",
+            mode=WebRtcMode.SENDONLY,
             media_stream_constraints={"audio": True, "video": False},
             audio_receiver_size=1024,
             audio_frame_callback=audio_processor.recv,
