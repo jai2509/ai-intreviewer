@@ -1,134 +1,140 @@
-# app.py
 import os
 import streamlit as st
-import tempfile
-import fitz  # PyMuPDF
-import docx2txt
-import requests
-import smtplib
-import speech_recognition as sr
-from email.message import EmailMessage
 from dotenv import load_dotenv
-from huggingface_hub import InferenceClient
-import whisper
-import openai
-import re
+import requests
+import docx2txt
+import json
+from datetime import datetime
+from io import BytesIO
+from fpdf import FPDF
 
 # Load environment variables
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 JOOBLE_API_KEY = os.getenv("JOOBLE_API_KEY")
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASS = os.getenv("EMAIL_PASS")
+ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 
-# Load Whisper model for transcription
-st.session_state.whisper_model = whisper.load_model("base")
+st.set_page_config(page_title="AI Mock Interviewer", layout="centered")
+st.title("🧠 AI-Based Mock Interviewer")
 
-st.set_page_config(page_title="AI Mock Interviewer")
-st.title("🎤 AI Mock Interviewer")
-st.markdown("Upload your resume and prepare for an AI-powered interview")
+# 1. Upload Resume
+st.subheader("📄 Upload Your Resume (DOCX or TXT)")
+resume_file = st.file_uploader("Upload resume", type=["docx", "txt"])
 
-# 1. Resume Parsing
-def parse_resume(file):
-    if file.name.endswith(".pdf"):
-        doc = fitz.open(stream=file.read(), filetype="pdf")
-        return " ".join([page.get_text() for page in doc])
-    elif file.name.endswith(".docx"):
+def extract_resume_text(file):
+    if file.name.endswith(".docx"):
         return docx2txt.process(file)
-    return ""
+    return file.read().decode("utf-8")
 
-# 2. Extract Skills (basic regex or keywords)
-def extract_skills(text):
-    keywords = ["python", "machine learning", "data analysis", "sql", "deep learning", "nlp"]
-    return [kw for kw in keywords if kw.lower() in text.lower()]
+def extract_experience(resume_text):
+    for line in resume_text.splitlines():
+        if "year" in line.lower():
+            digits = [int(s) for s in line.split() if s.isdigit()]
+            if digits:
+                return digits[0]
+    return 1  # Default
 
-# 3. Jooble API integration
-@st.cache_data
-def fetch_job_roles(skills):
-    url = "https://jooble.org/api/" + JOOBLE_API_KEY
-    body = {"keywords": ", ".join(skills), "location": "India"}
-    res = requests.post(url, json=body)
-    jobs = res.json().get("jobs", [])
-    return list(set([job["title"] for job in jobs]))[:5] or ["Data Scientist", "ML Engineer"]
+# 2. Choose Job Role
+job_role = None
+if resume_file:
+    resume_text = extract_resume_text(resume_file)
+    st.success("Resume uploaded successfully.")
+    experience = extract_experience(resume_text)
+    st.markdown(f"🔍 **Estimated Experience:** {experience} years")
 
-# 4. Generate interview questions via Groq
-@st.cache_data
-def generate_questions(role):
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "llama3-8b-8192",
-        "messages": [
-            {"role": "system", "content": "Generate 5 technical interview questions for a " + role},
-        ],
-        "temperature": 0.7
-    }
-    response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data)
-    return response.json()["choices"][0]["message"]["content"]
+    # Choose job role from resume
+    if "data" in resume_text.lower():
+        job_role = "Data Scientist"
+    elif "machine learning" in resume_text.lower():
+        job_role = "ML Engineer"
+    elif "frontend" in resume_text.lower():
+        job_role = "Frontend Developer"
+    else:
+        job_role = st.selectbox("Choose your preferred job role:", ["Data Scientist", "ML Engineer", "Backend Developer", "Frontend Developer", "Full Stack Developer"])
 
-# 5. Evaluate response
-def evaluate_answer(answer, question):
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-    prompt = f"Evaluate the following answer for the question '{question}' in terms of technical accuracy, clarity, and confidence. Give detailed feedback:\nAnswer: {answer}"
-    data = {
-        "model": "llama3-8b-8192",
-        "messages": [
-            {"role": "system", "content": "You are a technical interviewer."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.7
-    }
-    res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data)
-    return res.json()["choices"][0]["message"]["content"]
-
-# 6. Send feedback report
-def send_email(to_email, feedback):
-    msg = EmailMessage()
-    msg["Subject"] = "Your AI Interview Feedback Report"
-    msg["From"] = EMAIL_USER
-    msg["To"] = to_email
-    msg.set_content(feedback)
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(EMAIL_USER, EMAIL_PASS)
-        smtp.send_message(msg)
-
-# UI Components
-resume_file = st.file_uploader("📄 Upload your resume (PDF/DOCX)", type=["pdf", "docx"])
-email = st.text_input("📧 Enter your email for the report")
-
-if resume_file and email:
-    with st.spinner("Extracting resume content..."):
-        resume_text = parse_resume(resume_file)
-        skills = extract_skills(resume_text)
-        st.success(f"Extracted skills: {', '.join(skills)}")
-        job_roles = fetch_job_roles(skills)
-
-    selected_role = st.selectbox("🎯 Choose a job role for interview", job_roles)
-    if st.button("Generate Interview Questions"):
-        questions = generate_questions(selected_role)
+# 3. Generate Questions using Groq
+if job_role:
+    st.subheader(f"🧑‍💻 Interview: {job_role}")
+    if st.button("Generate Questions"):
+        prompt = f"Act as an interviewer and ask 5 technical questions for a {job_role} position. Include diverse difficulty."
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "llama3-8b-8192", "messages": [{"role": "system", "content": "Be a professional interviewer."}, {"role": "user", "content": prompt}]}
+        )
+        questions = response.json()["choices"][0]["message"]["content"]
         st.session_state.questions = questions.split("\n")
+        st.session_state.answers = []
+        st.success("Questions generated!")
 
+# 4. Voice Response Input
 if "questions" in st.session_state:
-    st.markdown("### 🎙️ Answer these questions below")
-    feedbacks = []
-    for q in st.session_state.questions:
+    st.subheader("🎙️ Answer Interview Questions (Voice)")
+    for i, q in enumerate(st.session_state.questions):
         if not q.strip():
             continue
-        st.markdown(f"**{q}**")
-        audio_file = st.file_uploader("Upload answer audio", type=["wav", "mp3"], key=q)
-        if audio_file:
-            with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                tmp.write(audio_file.read())
-                tmp_path = tmp.name
-            transcript = st.session_state.whisper_model.transcribe(tmp_path)["text"]
-            st.markdown(f"📝 Transcribed: {transcript}")
-            with st.spinner("Evaluating answer..."):
-                feedback = evaluate_answer(transcript, q)
-                feedbacks.append((q, transcript, feedback))
-                st.markdown(f"✅ Feedback: {feedback}")
+        st.markdown(f"**Q{i+1}:** {q}")
+        audio = st.file_uploader(f"Upload answer for Q{i+1} (WAV/MP3)", type=["wav", "mp3"], key=f"audio{i}")
+        if audio:
+            upload_url = "https://api.assemblyai.com/v2/upload"
+            headers = {"authorization": ASSEMBLYAI_API_KEY}
+            upload_response = requests.post(upload_url, headers=headers, data=audio)
+            audio_url = upload_response.json()["upload_url"]
 
-    if st.button("📨 Send Feedback Report"):
-        report = ""
-        for q, a, fb in feedbacks:
-            report += f"Q: {q}\nA: {a}\nFeedback: {fb}\n\n"
-        send_email(email, report)
-        st.success("Feedback report sent to your email!")
+            # Transcribe
+            transcript_req = {"audio_url": audio_url}
+            transcript_url = "https://api.assemblyai.com/v2/transcript"
+            transcript_response = requests.post(transcript_url, headers=headers, json=transcript_req)
+            transcript_id = transcript_response.json()["id"]
+
+            # Poll for result
+            status = "queued"
+            while status not in ["completed", "error"]:
+                poll = requests.get(f"https://api.assemblyai.com/v2/transcript/{transcript_id}", headers=headers)
+                result = poll.json()
+                status = result["status"]
+            if status == "completed":
+                answer = result["text"]
+                st.markdown(f"📜 **Transcript:** {answer}")
+                st.session_state.answers.append((q, answer))
+            else:
+                st.error("Transcription failed.")
+
+# 5. Generate Feedback Report
+if st.button("📄 Generate Feedback Report"):
+    if "answers" in st.session_state:
+        report_lines = ["Mock Interview Report", f"Candidate Role: {job_role}", "", f"Date: {datetime.now().strftime('%Y-%m-%d')}"]
+        for i, (q, a) in enumerate(st.session_state.answers):
+            report_lines.append(f"Q{i+1}: {q}")
+            report_lines.append(f"A{i+1}: {a}")
+            report_lines.append("")
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        for line in report_lines:
+            pdf.multi_cell(0, 10, line)
+        buf = BytesIO()
+        pdf.output(buf)
+        st.download_button("Download Report", data=buf.getvalue(), file_name="interview_report.pdf")
+
+# 6. Job Suggestions
+if job_role and "experience" in locals():
+    st.subheader("💼 Job Suggestions")
+    location = st.text_input("Enter your location for job filtering (e.g., 'India')", "India")
+    if st.button("Find Jobs"):
+        jooble_url = f"https://jooble.org/api/{JOOBLE_API_KEY}"
+        payload = {"keywords": job_role, "location": location}
+        headers = {"Content-Type": "application/json"}
+        job_response = requests.post(jooble_url, headers=headers, data=json.dumps(payload))
+
+        if job_response.ok:
+            jobs = job_response.json().get("jobs", [])[:5]
+            if jobs:
+                for job in jobs:
+                    st.markdown(f"🔹 **{job['title']}** at *{job['company']}, {job['location']}*")
+                    st.markdown(f"[Apply]({job['link']})")
+            else:
+                st.info("No matching jobs found.")
+        else:
+            st.error("Job search failed. Check Jooble API key.")
