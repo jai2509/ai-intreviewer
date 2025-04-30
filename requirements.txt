@@ -4,3 +4,4 @@ python-dotenv
 PyPDF2
 streamlit-webrtc==0.45.0
 av
+fpdf
