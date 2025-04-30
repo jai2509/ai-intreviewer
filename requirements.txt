@@ -1,11 +1,5 @@
 streamlit
-python-dotenv
 requests
-PyMuPDF
+python-dotenv
 docx2txt
-speechrecognition
-smtplib
-whisper
-openai
-huggingface_hub
-email-validator
+fpdf
