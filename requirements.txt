@@ -1,0 +1,11 @@
+streamlit
+python-dotenv
+requests
+PyMuPDF
+docx2txt
+speechrecognition
+smtplib
+whisper
+openai
+huggingface_hub
+email-validator
