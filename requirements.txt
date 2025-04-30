@@ -1,8 +1,6 @@
 streamlit
-PyPDF2
 requests
 python-dotenv
-openai
-SpeechRecognition
-pydub
-streamlit-webrtc
+PyPDF2
+streamlit-webrtc==0.45.0
+av
