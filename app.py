@@ -9,6 +9,7 @@ from streamlit_webrtc import webrtc_streamer
 import av
 import numpy as np
 import wave
+from fpdf import FPDF
 
 # Load API keys
 load_dotenv()
@@ -17,7 +18,7 @@ ASSEMBLY_API_KEY = os.getenv("ASSEMBLY_API_KEY")
 JOOOBLE_API_KEY = os.getenv("JOOOBLE_API_KEY")
 
 st.set_page_config(page_title="AI Interviewer", layout="centered")
-st.title("🧠 AI Interviewer with Voice & Job Suggestions")
+st.title("🌐 Multilingual AI Interviewer with Feedback")
 
 # ------------------------- Resume Upload -------------------------
 uploaded_file = st.file_uploader("📄 Upload your Resume (PDF)", type="pdf")
@@ -28,11 +29,14 @@ if uploaded_file:
     for page in reader.pages:
         resume_text += page.extract_text()
 
-# ------------------------- Role Selection -------------------------
+# ------------------------- Role and Language Selection -------------------------
 if resume_text:
     role = st.selectbox("🎯 Select the Role You Are Applying For", [
         "Data Scientist", "Software Engineer", "Machine Learning Engineer",
         "Frontend Developer", "Backend Developer", "Data Analyst"
+    ])
+    language = st.selectbox("🌍 Interview Language", [
+        "English", "Hindi", "Spanish", "French", "German", "Chinese"
     ])
 
     # ---------------------- Generate Interview Questions ----------------------
@@ -42,17 +46,14 @@ if resume_text:
                 "Authorization": f"Bearer {GROQ_API_KEY}",
                 "Content-Type": "application/json"
             }
+            prompt = f"""You are an AI Interviewer. Ask 3 interview questions in {language} for a candidate applying to the role of {role}.
+Resume: {resume_text}"""
+
             data = {
                 "model": "llama3-8b-8192",
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are an AI Interviewer. Ask 3 role-specific questions based on the user's resume."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"My resume: {resume_text}\nRole: {role}"
-                    }
+                    {"role": "system", "content": "You are a multilingual AI interviewer."},
+                    {"role": "user", "content": prompt}
                 ]
             }
             response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data)
@@ -101,13 +102,13 @@ if resume_text:
                 def transcribe_audio(filepath):
                     headers = {'authorization': ASSEMBLY_API_KEY}
                     with open(filepath, 'rb') as f:
-                        files = {
-                            'file': ('response.wav', f, 'audio/wav')
-                        }
-                        response = requests.post('https://api.assemblyai.com/v2/upload', headers=headers, files=files)
-                        upload_url = response.json()['upload_url']
-
-                    json_data = {'audio_url': upload_url}
+                        upload_response = requests.post(
+                            'https://api.assemblyai.com/v2/upload',
+                            headers=headers,
+                            files={'file': f}
+                        )
+                    upload_url = upload_response.json()['upload_url']
+                    json_data = {'audio_url': upload_url, 'language_code': language.lower()[:2]}
                     transcript_response = requests.post('https://api.assemblyai.com/v2/transcript', json=json_data, headers=headers)
                     transcript_id = transcript_response.json()['id']
 
@@ -124,6 +125,25 @@ if resume_text:
                     transcription = transcribe_audio(wav_path)
                     st.success("🗣️ Your Transcribed Answer:")
                     st.write(transcription)
+
+                # ---------------------- Feedback Scoring ----------------------
+                with st.spinner("Generating feedback..."):
+                    feedback_prompt = f"""Evaluate the following interview response for the role of {role}:
+Response: {transcription}
+Provide a score out of 10 and a brief feedback in {language}."""
+
+                    feedback_data = {
+                        "model": "llama3-8b-8192",
+                        "messages": [
+                            {"role": "system", "content": "You are a multilingual interview evaluator."},
+                            {"role": "user", "content": feedback_prompt}
+                        ]
+                    }
+                    feedback_response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=feedback_data)
+                    feedback = feedback_response.json()["choices"][0]["message"]["content"]
+
+                    st.markdown("### 🧠 Feedback & Score")
+                    st.write(feedback)
 
                 # ---------------------- Job Suggestions ----------------------
                 st.markdown("### 💼 Job Recommendations")
@@ -147,3 +167,24 @@ if resume_text:
                             """)
                     else:
                         st.info("No jobs found. Try a different role or location.")
+
+                # ---------------------- PDF Download ----------------------
+                def generate_pdf(transcription, questions, job_suggestions, feedback):
+                    pdf = FPDF()
+                    pdf.add_page()
+                    pdf.set_font("Arial", size=12)
+                    pdf.cell(200, 10, txt="AI Interview Summary", ln=True, align='C')
+                    pdf.multi_cell(0, 10, txt=f"\nInterview Questions:\n{questions}")
+                    pdf.multi_cell(0, 10, txt=f"\nYour Transcribed Answer:\n{transcription}")
+                    pdf.multi_cell(0, 10, txt=f"\nFeedback:\n{feedback}")
+                    pdf.multi_cell(0, 10, txt="\nJob Suggestions:")
+                    for job in job_suggestions:
+                        pdf.multi_cell(0, 10, txt=f"- {job['title']} ({job['location']})\nLink: {job['link']}")
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
+                        pdf.output(tmp_pdf.name)
+                        return tmp_pdf.name
+
+                if jobs:
+                    pdf_path = generate_pdf(transcription, questions, jobs, feedback)
+                    with open(pdf_path, "rb") as f:
+                        st.download_button("📄 Download Interview Summary (PDF)", f, file_name="interview_summary.pdf")
