@@ -1,5 +1,4 @@
 streamlit
 requests
 python-dotenv
-docx2txt
-fpdf
+PyMuPDF
