@@ -1,128 +1,125 @@
-import os
 import streamlit as st
-from dotenv import load_dotenv
 import requests
 import fitz  # PyMuPDF
-import time
-from datetime import datetime
+import io
+import os
+from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ASSEMBLY_API_KEY = os.getenv("ASSEMBLY_API_KEY")
 JOOBLE_API_KEY = os.getenv("JOOBLE_API_KEY")
 
-st.set_page_config(page_title="AI Mock Interviewer", layout="centered")
-st.title("🧠 AI Mock Interviewer")
+st.set_page_config(page_title="AI Interviewer", layout="centered")
+st.title("🧠 AI-Based Mock Interviewer")
+st.markdown("Upload your resume and start a mock interview tailored to your job role.")
 
-# ---------- Resume Upload ----------
-st.subheader("📄 Upload Your Resume (PDF)")
-resume_file = st.file_uploader("Upload your resume to start the mock interview", type=["pdf"])
-parsed_resume_text = ""
+# ========== Resume Upload ==========
+st.header("📄 Upload Your Resume (PDF)")
+resume_file = st.file_uploader("Upload PDF Resume", type=["pdf"])
 
-def extract_text_from_resume(pdf_file):
-    text = ""
+def extract_text_from_pdf(file):
     try:
-        doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-        for page in doc:
+        text = ""
+        pdf = fitz.open(stream=file.read(), filetype="pdf")
+        for page in pdf:
             text += page.get_text()
         return text
     except Exception as e:
-        return f"⚠️ Error extracting resume text: {e}"
+        return f"Error reading PDF: {e}"
 
 if resume_file:
-    with st.spinner("Parsing resume..."):
-        parsed_resume_text = extract_text_from_resume(resume_file)
-        if parsed_resume_text.startswith("⚠️"):
-            st.error(parsed_resume_text)
-        else:
-            st.success("✅ Resume parsed successfully.")
-            st.text_area("📄 Parsed Resume Text", parsed_resume_text, height=250)
+    with st.spinner("Extracting information from resume..."):
+        resume_text = extract_text_from_pdf(resume_file)
+        st.success("Resume parsed successfully!")
+        st.text_area("📄 Resume Content", resume_text[:2000], height=300)
 
-# ---------- Job Role Selection ----------
-st.subheader("🎯 Select or Confirm Job Role")
-job_roles = ["Data Scientist", "Frontend Developer", "Backend Developer", "AI/ML Engineer"]
-job_role = st.selectbox("Choose job role for interview:", job_roles)
+        # ========== Select Job Role ==========
+        st.subheader("🧑‍💼 Select Target Job Role")
+        job_roles = ["Data Scientist", "Backend Developer", "Frontend Developer", "Machine Learning Engineer", "DevOps Engineer"]
+        selected_role = st.selectbox("Choose a role:", job_roles)
 
-# ---------- Interview Question Generation ----------
-st.subheader("🧪 AI Interview Questions")
-if st.button("Generate Questions"):
-    prompt = f"Generate 5 interview questions for the role of {job_role} based on this resume:\n{parsed_resume_text}"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "llama3-8b-8192",
-        "messages": [
-            {"role": "system", "content": "You are an expert interviewer."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7
-    }
-    response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=data)
-    if response.status_code == 200:
-        questions = response.json()["choices"][0]["message"]["content"].split("\n")
-        st.session_state["questions"] = [q for q in questions if q.strip()]
-        st.success("Questions generated!")
-    else:
-        st.error("Failed to generate questions.")
+        # ========== Generate Interview Questions ==========
+        st.subheader("🎯 AI-Generated Interview Questions")
+        if st.button("Generate Questions"):
+            groq_url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            data = {
+                "model": "llama3-8b-8192",
+                "messages": [
+                    {"role": "system", "content": f"You are a professional interviewer for the role of {selected_role}. Ask 5 technical questions relevant to the resume:\n{resume_text[:1500]}"},
+                    {"role": "user", "content": f"Please generate 5 technical interview questions for a {selected_role} based on my resume."}
+                ]
+            }
+            response = requests.post(groq_url, headers=headers, json=data)
+            if response.status_code == 200:
+                questions = response.json()["choices"][0]["message"]["content"]
+                st.session_state.questions = questions.split("\n")
+                for q in st.session_state.questions:
+                    st.markdown(f"**❓ {q}**")
+            else:
+                st.error("Failed to fetch questions from Groq.")
 
-# ---------- Interview Answer Recording (Simulated with text input) ----------
+# ========== Mock Interview ==========
 if "questions" in st.session_state:
-    st.subheader("🎙️ Your Responses")
-    st.session_state.answers = []
-    for i, question in enumerate(st.session_state["questions"]):
-        answer = st.text_area(f"{question}", key=f"answer_{i}")
-        if answer:
-            st.session_state.answers.append((question, answer))
+    st.subheader("🎤 Answer the Questions (Text Simulation)")
+    answers = []
+    for idx, question in enumerate(st.session_state.questions):
+        answer = st.text_area(f"Answer {idx+1}", key=f"answer_{idx}")
+        answers.append(answer)
 
-# ---------- Job Suggestion (Experience based) ----------
-def suggest_jobs_from_jooble(role):
-    api_url = f"https://jooble.org/api/{JOOBLE_API_KEY}"
+    if st.button("📝 Generate Feedback Report"):
+        # Combine Q&A and send to Groq for evaluation
+        qna = "\n".join([f"Q: {st.session_state.questions[i]}\nA: {answers[i]}" for i in range(len(answers))])
+        feedback_prompt = f"""Evaluate this mock interview technically and give feedback with score (out of 10), strong points, and areas for improvement:\n{qna}"""
+
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "llama3-8b-8192",
+                "messages": [
+                    {"role": "system", "content": "You are an expert technical interviewer and feedback generator."},
+                    {"role": "user", "content": feedback_prompt}
+                ]
+            }
+        )
+
+        if response.status_code == 200:
+            feedback = response.json()["choices"][0]["message"]["content"]
+            st.success("✅ Interview feedback generated!")
+            st.download_button("📥 Download Feedback Report", feedback, file_name="interview_feedback.txt")
+            st.text_area("📋 Feedback Preview", feedback, height=300)
+        else:
+            st.error("Failed to generate feedback.")
+
+# ========== Job Suggestions ==========
+st.header("💼 Job Suggestions (Experience Based)")
+experience = st.slider("Select your experience (in years):", 0, 15, 2)
+location = st.text_input("Preferred Job Location", "India")
+keywords = st.text_input("Job Keywords (comma-separated)", "data science,python")
+
+if st.button("🔍 Find Jobs"):
+    jooble_url = "https://jooble.org/api/"
     payload = {
-        "keywords": role,
-        "location": "India",
-        "experience": 2
+        "keywords": keywords,
+        "location": location,
+        "experience": experience
     }
     headers = {"Content-Type": "application/json"}
-    response = requests.post(api_url, json=payload, headers=headers)
+
+    response = requests.post(f"{jooble_url}{JOOBLE_API_KEY}", json=payload, headers=headers)
+
     if response.status_code == 200:
-        jobs = response.json().get("jobs", [])
-        return jobs[:3]  # top 3 jobs
-    else:
-        return []
-
-st.subheader("💼 Job Suggestions")
-if st.button("Suggest Jobs"):
-    jobs = suggest_jobs_from_jooble(job_role)
-    if jobs:
+        data = response.json()
+        jobs = data.get("jobs", [])[:5]
+        if not jobs:
+            st.warning("No jobs found for given filters.")
         for job in jobs:
-            st.markdown(f"**{job['title']}** at *{job['company']}*\n
-📍 {job['location']}\n
-🔗 [Apply here]({job['link']})")
+            st.markdown(f"""**{job['title']}** at *{job['company']}*\n{job['location']}\n[More Info]({job['link']})""")
     else:
-        st.info("No jobs found or Jooble API error.")
-
-# ---------- Downloadable Feedback Report ----------
-from datetime import datetime
-if st.button("📄 Generate Feedback Report"):
-    if "answers" in st.session_state and st.session_state.answers:
-        report_lines = [
-            "Mock Interview Feedback Report",
-            f"Candidate Role: {job_role}",
-            f"Interview Date: {datetime.now().strftime('%Y-%m-%d')}",
-            "-"*40
-        ]
-        for i, (q, a) in enumerate(st.session_state.answers):
-            report_lines.append(f"Q{i+1}: {q}")
-            report_lines.append(f"A{i+1}: {a}")
-            report_lines.append("-" * 20)
-
-        report_text = "\n".join(report_lines)
-        st.download_button(
-            label="📥 Download Report (.txt)",
-            data=report_text,
-            file_name="interview_report.txt",
-            mime="text/plain"
-        )
+        st.error("Failed to fetch jobs from Jooble.")
